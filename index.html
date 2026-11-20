@@ -1,0 +1,381 @@
+В прошлой версии анимация могла работать нестабильно из-за того, что частицы создавались внутри игрового поля или имели слишком сложную структуру. 
+
+Я переписал код анимации. Теперь используется чистый JavaScript и CSS, без тяжелых SVG-картинок. 
+
+При победе: Сверху вылетают яркие кружочки-конфетти с тенью.
+При поражении: Экран заполняется большими красными дизлайками, которые плавно вращаются и падают.
+
+Скопируйте этот исправленный код:
+
+html
+Копировать
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Крестики-нолики: Фейерверк</title>
+    <style>
+        :root {
+            --bg: #0f0f23;
+            --x-color: #ff4757;
+            --o-color: #54a0ff;
+            --cell-bg: #1e1e3a;
+            --text: #f1f1f1;
+            --panel: #2d2d5a;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a40 100%);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+            font-size: 36px;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+            z-index: 10;
+        }
+
+        #status {
+            margin-bottom: 20px;
+            font-size: 22px;
+            padding: 12px 30px;
+            background: var(--panel);
+            border-radius: 40px;
+            border: 1px solid #444;
+            z-index: 10;
+        }
+
+        #board {
+            display: grid;
+            grid-template-columns: repeat(3, 120px);
+            grid-template-rows: repeat(3, 120px);
+            gap: 15px;
+            z-index: 10;
+        }
+
+        .cell {
+            background: var(--cell-bg);
+            font-size: 72px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            border-radius: 15px;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .cell:hover:not(.filled) {
+            background: #2a2a55;
+            border-color: #555;
+            transform: scale(1.05);
+        }
+
+        .x { color: var(--x-color); text-shadow: 0 0 15px rgba(255, 71, 87, 0.6); }
+        .o { color: var(--o-color); text-shadow: 0 0 15px rgba(84, 160, 255, 0.6); }
+
+        .filled { cursor: default; }
+
+        .control-panel {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+            z-index: 10;
+        }
+
+        button {
+            padding: 12px 25px;
+            background: var(--panel);
+            color: var(--text);
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+            z-index: 10;
+        }
+
+        button:hover { background: #3a3a68; }
+
+        /* СТИЛИ АНИМАЦИИ */
+        .particle {
+            position: fixed;
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* Анимация конфетти (кружочки) */
+        @keyframes fall-confetti {
+            0% {
+                transform: translateY(-100px) rotate(0deg) scale(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+                transform: translateY(0) rotate(360deg) scale(1);
+            }
+            100% {
+                transform: translateY(110vh) rotate(720deg) scale(1);
+                opacity: 0;
+            }
+        }
+
+        /* Анимация дизлайков */
+        @keyframes fall-thumb {
+            0% {
+                transform: translateY(-150px) rotate(0deg) scale(0.5);
+                opacity: 0;
+            }
+            20% {
+                opacity: 1;
+                transform: translateY(20px) rotate(10deg) scale(1);
+            }
+            100% {
+                transform: translateY(110vh) rotate(20deg) scale(1);
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Крестики-нолики</h1>
+    <div id="status">Ваш ход (X)</div>
+    
+    <div id="board">
+        <div class="cell" data-index="0"></div>
+        <div class="cell" data-index="1"></div>
+        <div class="cell" data-index="2"></div>
+        <div class="cell" data-index="3"></div>
+        <div class="cell" data-index="4"></div>
+        <div class="cell" data-index="5"></div>
+        <div class="cell" data-index="6"></div>
+        <div class="cell" data-index="7"></div>
+        <div class="cell" data-index="8"></div>
+    </div>
+
+    <div class="control-panel">
+        <button id="reset-btn">Новая игра</button>
+    </div>
+
+    <div class="control-panel">
+        <label>
+            <select id="difficulty-select" style="padding: 8px; border-radius: 6px;">
+                <option value="easy">Легкий</option>
+                <option value="medium" selected>Средний</option>
+                <option value="hard">Сложный</option>
+            </select>
+        </label>
+    </div>
+
+    <script>
+        const winConditions = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
+        ];
+
+        const cells = document.querySelectorAll('.cell');
+        const statusDiv = document.getElementById('status');
+        const resetBtn = document.getElementById('reset-btn');
+        const difficultySelect = document.getElementById('difficulty-select');
+
+        const HUMAN = 'X';
+        const AI = 'O';
+        
+        let board = Array(9).fill(null);
+        let gameActive = true;
+        let currentPlayer = HUMAN;
+        let difficulty = 'medium';
+
+        function updateStatus(text) {
+            statusDiv.textContent = text;
+        }
+
+        function handleHumanClick(e) {
+            if (!gameActive || currentPlayer !== HUMAN) return;
+            const index = e.target.getAttribute('data-index');
+            if (board[index] !== null) return;
+
+            makeMove(index, HUMAN);
+            if (checkGameEnd(HUMAN)) return;
+
+            currentPlayer = AI;
+            updateStatus('Ход компьютера...');
+            setTimeout(aiTurn, 400);
+        }
+
+        function makeMove(index, player) {
+            board[index] = player;
+            const cell = cells[index];
+            cell.classList.add('filled', player.toLowerCase());
+            cell.textContent = player;
+        }
+
+        function checkGameEnd(player) {
+            if (checkWin(player)) {
+                gameActive = false;
+                if (player === HUMAN) {
+                    updateStatus('🎆 Победа! Лови конфетти!');
+                    createConfetti();
+                } else {
+                    updateStatus('💩 Поражение... Дизлайки!');
+                    createThumbsDown();
+                }
+                return true;
+            }
+            if (board.includes(null) === false) {
+                gameActive = false;
+                updateStatus('🤝 Ничья!');
+                return true;
+            }
+            return false;
+        }
+
+        function checkWin(player) {
+            return winConditions.some(cond => 
+                board[cond[0]] === player && board[cond[1]] === player && board[cond[2]] === player
+            );
+        }
+
+        /* === ЛОГИКА ИИ === */
+        function getRandomMove() {
+            const empty = board.map((v, i) => v === null ? i : null).filter(i => i !== null);
+            return empty[Math.floor(Math.random() * empty.length)];
+        }
+
+        function getMediumMove() {
+            for (let i = 0; i < 9; i++) { if (board[i] === null) { board[i] = AI; if (checkWin(AI)) { board[i] = null; return i; } board[i] = null; } }
+            for (let i = 0; i < 9; i++) { if (board[i] === null) { board[i] = HUMAN; if (checkWin(HUMAN)) { board[i] = null; return i; } board[i] = null; } }
+            return getRandomMove();
+        }
+
+        function minimax(newBoard, depth, isMaximizing) {
+            if (checkWinInBoard(newBoard, AI)) return 10 - depth;
+            if (checkWinInBoard(newBoard, HUMAN)) return depth - 10;
+            if (!newBoard.includes(null)) return 0;
+            if (isMaximizing) { let best = -Infinity; for(let i=0;i<9;i++){ if(newBoard[i]===null){ newBoard[i]=AI; best=Math.max(best, minimax(newBoard, depth+1, false)); newBoard[i]=null; } } return best; } 
+            else { let best = Infinity; for(let i=0;i<9;i++){ if(newBoard[i]===null){ newBoard[i]=HUMAN; best=Math.min(best, minimax(newBoard, depth+1, true)); newBoard[i]=null; } } return best; }
+        }
+
+        function checkWinInBoard(b, player) {
+            return winConditions.some(cond => b[cond[0]] === player && b[cond[1]] === player && b[cond[2]] === player);
+        }
+
+        function findBestMove() {
+            let bestScore = -Infinity, move = -1;
+            for(let i=0;i<9;i++){ if(board[i]===null){ board[i]=AI; let score=minimax(board,0,false); board[i]=null; if(score>bestScore){bestScore=score; move=i;} } }
+            return move;
+        }
+
+        function aiTurn() {
+            if (!gameActive) return;
+            let moveIndex = -1;
+            if (difficulty === 'easy') moveIndex = getRandomMove();
+            else if (difficulty === 'medium') moveIndex = getMediumMove();
+            else if (difficulty === 'hard') moveIndex = findBestMove();
+
+            if (moveIndex !== -1) {
+                makeMove(moveIndex, AI);
+                if (checkGameEnd(AI)) return;
+                currentPlayer = HUMAN;
+                updateStatus('Ваш ход (X)');
+            }
+        }
+
+        /* === НОВАЯ АНИМАЦИЯ === */
+        function createConfetti() {
+            const count = 100;
+            for (let i = 0; i < count; i++) {
+                const particle = document.createElement('div');
+                particle.classList.add('particle');
+                
+                // Случайный яркий цвет
+                const colors = ['#FF4757', '#FFD700', '#17A2B8', '#FFA500', '#20BF6B'];
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                
+                particle.style.width = '15px';
+                particle.style.height = '15px';
+                particle.style.backgroundColor = color;
+                particle.style.left = Math.random() * 100 + 'vw';
+                particle.style.top = '-30px';
+                
+                // Случайная задержка и длительность для реалистичности
+                const duration = 3 + Math.random() * 3;
+                const delay = Math.random() * 2;
+                
+                particle.style.cssText += `
+                    animation: fall-confetti ${duration}s linear ${delay}s forwards;
+                    box-shadow: 0 0 10px ${color};
+                `;
+                
+                document.body.appendChild(particle);
+
+                setTimeout(() => {
+                    if (particle.parentNode) particle.remove();
+                }, (duration + delay) * 1000);
+            }
+        }
+
+        function createThumbsDown() {
+            const count = 40;
+            for (let i = 0; i < count; i++) {
+                const particle = document.createElement('div');
+                particle.classList.add('particle');
+                
+                particle.style.width = '50px';
+                particle.style.height = '50px';
+                
+                // Используем встроенный SVG для дизлайка (красный)
+                particle.style.background = `data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23ff0000' d='M15 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7zM5 3v2h7l-8.08 8.08 1.41 1.41L11 6.41V10H9V3H5zm10 18h2v2h-2v-2zm2-7h-2v3h-3v2h3v3h2v-3h3v-2h-3V9z'/></svg>`;
+                particle.style.backgroundSize = 'contain';
+                
+                particle.style.left = Math.random() * 100 + 'vw';
+                particle.style.top = '-70px';
+                
+                const duration = 4 + Math.random() * 2;
+                const delay = Math.random() * 2;
+                
+                particle.style.cssText += `
+                    animation: fall-thumb ${duration}s linear ${delay}s forwards;
+                `;
+                
+                document.body.appendChild(particle);
+
+                setTimeout(() => {
+                    if (particle.parentNode) particle.remove();
+                }, (duration + delay) * 1000);
+            }
+        }
+
+        function resetGame() {
+            board = Array(9).fill(null);
+            gameActive = true;
+            currentPlayer = HUMAN;
+            difficulty = difficultySelect.value;
+            updateStatus('Ваш ход (X)');
+            cells.forEach(c => {
+                c.textContent = '';
+                c.className = 'cell';
+            });
+        }
+
+        cells.forEach(cell => cell.addEventListener('click', handleHumanClick));
+        resetBtn.addEventListener('click', resetGame);
+        difficultySelect.addEventListener('change', (e) => { difficulty = e.target.value; resetGame(); });
+    </script>
+</body>
+</html>
